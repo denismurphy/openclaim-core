@@ -15,6 +15,7 @@
 | Full build (format check, unit + integration tests, coverage) | `./mvnw verify` |
 | Unit tests only | `./mvnw test` |
 | Apply formatting | `./mvnw spotless:apply` |
+| Mutation-check a guard | `scripts/mutate.sh <file> '<perl s///>' <TestClass>` (prints KILLED or SURVIVED) |
 | Run locally | `./mvnw spring-boot:run -Dspring-boot.run.profiles=dev` |
 
 Unit tests are named `*Test` (Surefire); tests that need a database or HTTP stub are named `*IT` (Failsafe).
@@ -26,3 +27,9 @@ The coverage report is written to `target/site/jacoco/index.html`.
   before committing.
 - The compiler runs with `-Xlint:all -Werror`.
 - Packages are `@NullMarked` (JSpecify); mark nullable values with `@Nullable`.
+
+## Traps
+
+- **Stale classes after restoring a file.** Maven's incremental compiler compares timestamps. Restoring a source
+  file with `mv`/`cp -p` (for example after a mutation check) keeps its older mtime, so the previously compiled
+  class is silently reused. `touch` the restored file or run `./mvnw clean ...`.
