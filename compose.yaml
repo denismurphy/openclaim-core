@@ -1,0 +1,9 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: openclaim
+      POSTGRES_USER: openclaim
+      POSTGRES_PASSWORD: openclaim
+    ports:
+      - "5432"

@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: openclaim-core
+  threads:
+    virtual:
+      enabled: true
+  flyway:
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
