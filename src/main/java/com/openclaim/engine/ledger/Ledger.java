@@ -4,6 +4,7 @@ import java.time.OffsetDateTime;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jdbc.core.JdbcAggregateOperations;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -26,6 +27,24 @@ public class Ledger {
 
     public void post(Journal journal) {
         aggregates.insert(journal);
+    }
+
+    /**
+     * The amount of an already-booked journal, identified the same way its unique constraint identifies it.
+     *
+     * @return the debited amount, or empty if no such journal exists
+     */
+    public Optional<Long> bookedAmount(UUID claimId, LedgerEntryType type, String externalReference) {
+        return jdbc.sql("""
+                        SELECT sum(p.amount_minor) FILTER (WHERE p.amount_minor > 0) AS amount
+                        FROM ledger_journal j JOIN ledger_posting p ON p.journal_id = j.id
+                        WHERE j.claim_id = :claimId AND j.entry_type = :type AND j.external_reference = :reference
+                        GROUP BY j.id""")
+                .param("claimId", claimId)
+                .param("type", type.name())
+                .param("reference", externalReference)
+                .query(Long.class)
+                .optional();
     }
 
     public Balances balances(UUID claimId) {
