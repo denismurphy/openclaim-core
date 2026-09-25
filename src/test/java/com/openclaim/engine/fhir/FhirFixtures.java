@@ -26,7 +26,21 @@ public final class FhirFixtures {
                 Currency.getInstance("EUR"),
                 ZoneId.of("Europe/Dublin"),
                 new OpenClaimProperties.Fhir("https://ehr.example.org/mrn", DataSize.ofMegabytes(1), 50),
-                new OpenClaimProperties.Security("https://auth.openclaim.test"));
+                new OpenClaimProperties.Security("https://auth.openclaim.test"),
+                new OpenClaimProperties.Payer(
+                        java.net.URI.create("http://payer.invalid"),
+                        "/claims",
+                        null,
+                        java.time.Duration.ofSeconds(1),
+                        java.time.Duration.ofSeconds(2)),
+                new OpenClaimProperties.Outbox(
+                        false,
+                        java.time.Duration.ofSeconds(1),
+                        10,
+                        java.time.Duration.ofSeconds(30),
+                        8,
+                        java.time.Duration.ofSeconds(2),
+                        java.time.Duration.ofMinutes(10)));
     }
 
     public static String json(String classpathResource) {

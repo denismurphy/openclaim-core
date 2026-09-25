@@ -23,3 +23,6 @@ management:
 openclaim:
   security:
     issuer: ${OPENCLAIM_JWT_ISSUER}
+  payer:
+    base-url: ${OPENCLAIM_PAYER_BASE_URL}
+    ssl-bundle: payer
