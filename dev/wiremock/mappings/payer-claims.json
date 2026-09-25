@@ -1,0 +1,11 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "/claims",
+    "headers": {
+      "Idempotency-Key": { "matches": "[0-9a-f]{64}" },
+      "Content-Type": { "contains": "application/fhir+json" }
+    }
+  },
+  "response": { "status": 202 }
+}

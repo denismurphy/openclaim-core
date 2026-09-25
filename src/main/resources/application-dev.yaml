@@ -1,0 +1,23 @@
+# Local development: `scripts/dev-keys.sh` once, then `./mvnw spring-boot:run -Dspring-boot.run.profiles=dev`.
+# Spring Boot's Docker Compose support starts compose.yaml (PostgreSQL and a WireMock payer).
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          public-key-location: file:.dev-keys/public.pem
+
+openclaim:
+  security:
+    issuer: https://dev.openclaim.local
+  payer:
+    base-url: http://localhost:8089
+    # Plain HTTP to the local stub. Production uses the "payer" SSL bundle for mutual TLS.
+    ssl-bundle: ""
+  outbox:
+    poll-interval: 2s
+
+logging:
+  structured:
+    format:
+      console: ecs

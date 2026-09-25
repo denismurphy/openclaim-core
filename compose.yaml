@@ -1,3 +1,4 @@
+# Started automatically by `./mvnw spring-boot:run` (spring-boot-docker-compose).
 services:
   postgres:
     image: postgres:17-alpine
@@ -7,3 +8,14 @@ services:
       POSTGRES_PASSWORD: openclaim
     ports:
       - "5432"
+
+  # Stand-in payer gateway: accepts every claim with 202. Inspect received requests at
+  # http://localhost:8089/__admin/requests
+  payer:
+    image: wiremock/wiremock:3.13.2
+    ports:
+      - "8089:8080"
+    volumes:
+      - ./dev/wiremock:/home/wiremock:ro
+    labels:
+      org.springframework.boot.ignore: true
