@@ -6,9 +6,20 @@ spring:
       enabled: true
   flyway:
     locations: classpath:db/migration
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Required. RSA public key (PEM) of the token issuer; see README "Authentication".
+          public-key-location: ${OPENCLAIM_JWT_PUBLIC_KEY_LOCATION}
+          audiences: openclaim-core
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info,metrics
+
+openclaim:
+  security:
+    issuer: ${OPENCLAIM_JWT_ISSUER}

@@ -21,7 +21,8 @@ import org.springframework.validation.annotation.Validated;
 public record OpenClaimProperties(
         @NotNull @DefaultValue("EUR") Currency currency,
         @NotNull @DefaultValue("Europe/Dublin") ZoneId clinicalZone,
-        @Valid @NotNull @DefaultValue Fhir fhir) {
+        @Valid @NotNull @DefaultValue Fhir fhir,
+        @Valid @NotNull Security security) {
 
     /**
      * @param mrnSystem {@code Patient.identifier.system} that carries the medical record number
@@ -34,4 +35,11 @@ public record OpenClaimProperties(
 
             @NotNull @DefaultValue("1MB") DataSize maxRequestSize,
             @Min(1) @Max(999) @DefaultValue("50") int maxItems) {}
+
+    /**
+     * @param issuer required {@code iss} of every bearer token. Validated locally against the configured public key;
+     *     {@code spring.security.oauth2.resourceserver.jwt.issuer-uri} is deliberately not used because, combined with
+     *     a public key, Boot switches to OIDC discovery over the network.
+     */
+    public record Security(@NotBlank String issuer) {}
 }
