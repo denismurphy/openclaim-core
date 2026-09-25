@@ -1,0 +1,46 @@
+{
+  "resourceType": "ClaimResponse",
+  "identifier": [
+    { "system": "https://payer.example.org/adjudication", "value": "ADJ-0001" }
+  ],
+  "status": "active",
+  "type": {
+    "coding": [
+      { "system": "http://terminology.hl7.org/CodeSystem/claim-type", "code": "professional" }
+    ]
+  },
+  "use": "claim",
+  "patient": {
+    "identifier": { "system": "https://ehr.example.org/mrn", "value": "MRN-0001" }
+  },
+  "created": "2026-09-10T14:00:00+01:00",
+  "insurer": {
+    "identifier": { "system": "https://openclaim.example.org/payer", "value": "ACME-HEALTH" }
+  },
+  "request": { "reference": "Claim/00000000-0000-0000-0000-000000000000" },
+  "outcome": "complete",
+  "disposition": "Adjudicated with patient share",
+  "total": [
+    {
+      "category": { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/adjudication", "code": "submitted" } ] },
+      "amount": { "value": 205.50, "currency": "EUR" }
+    },
+    {
+      "category": { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/adjudication", "code": "eligible" } ] },
+      "amount": { "value": 180.00, "currency": "EUR" }
+    },
+    {
+      "category": { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/adjudication", "code": "benefit" } ] },
+      "amount": { "value": 150.00, "currency": "EUR" }
+    },
+    {
+      "category": { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/adjudication", "code": "copay" } ] },
+      "amount": { "value": 30.00, "currency": "EUR" }
+    }
+  ],
+  "payment": {
+    "type": { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/ex-paymenttype", "code": "complete" } ] },
+    "date": "2026-09-12",
+    "amount": { "value": 150.00, "currency": "EUR" }
+  }
+}

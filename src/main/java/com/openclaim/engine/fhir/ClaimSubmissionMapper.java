@@ -264,24 +264,7 @@ public class ClaimSubmissionMapper {
     }
 
     private long minorUnits(Money money, String expression) {
-        if (!money.hasValue() || !money.hasCurrency()) {
-            throw new FhirMappingException(
-                    IssueType.REQUIRED, expression, "An amount with value and currency is required");
-        }
-        if (!currency.getCurrencyCode().equals(money.getCurrency())) {
-            throw new FhirMappingException(
-                    IssueType.VALUE,
-                    expression + ".currency",
-                    "Only %s is accepted; found %s".formatted(currency.getCurrencyCode(), money.getCurrency()));
-        }
-        if (money.getValue().signum() < 0) {
-            throw new FhirMappingException(IssueType.VALUE, expression, "Amounts must not be negative");
-        }
-        try {
-            return MinorUnits.toMinor(money.getValue(), currency);
-        } catch (IllegalArgumentException e) {
-            throw new FhirMappingException(IssueType.VALUE, expression, e.getMessage());
-        }
+        return FhirMoney.toMinor(money, currency, expression);
     }
 
     private static Coding firstCoding(CodeableConcept concept, String expression) {
