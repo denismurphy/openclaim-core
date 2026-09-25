@@ -30,6 +30,7 @@ public class Claim {
     private final String currency;
     private final long totalBilledMinor;
     private final Instant serviceStart;
+    private final Instant createdAt;
 
     @MappedCollection(idColumn = "claim_id", keyColumn = "position")
     private final List<ClaimLine> lines;
@@ -53,6 +54,7 @@ public class Claim {
             String currency,
             long totalBilledMinor,
             Instant serviceStart,
+            Instant createdAt,
             List<ClaimLine> lines,
             List<ClaimDiagnosis> diagnoses,
             List<ScrubViolation> violations) {
@@ -67,12 +69,13 @@ public class Claim {
         this.currency = currency;
         this.totalBilledMinor = totalBilledMinor;
         this.serviceStart = serviceStart;
+        this.createdAt = createdAt;
         this.lines = new ArrayList<>(lines);
         this.diagnoses = new ArrayList<>(diagnoses);
         this.violations = new ArrayList<>(violations);
     }
 
-    public static Claim draft(UUID id, ClaimSubmission submission) {
+    public static Claim draft(UUID id, ClaimSubmission submission, Instant createdAt) {
         return new Claim(
                 id,
                 null,
@@ -85,6 +88,7 @@ public class Claim {
                 submission.currency().getCurrencyCode(),
                 submission.totalMinor(),
                 submission.serviceStart(),
+                createdAt,
                 submission.items().stream()
                         .map(item -> new ClaimLine(
                                 item.sequence(),
@@ -153,6 +157,10 @@ public class Claim {
 
     public Instant serviceStart() {
         return serviceStart;
+    }
+
+    public Instant createdAt() {
+        return createdAt;
     }
 
     public List<ClaimLine> lines() {

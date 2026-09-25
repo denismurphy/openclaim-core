@@ -4,6 +4,7 @@ import static com.openclaim.engine.claim.SubmissionFixtures.aSubmission;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -17,7 +18,7 @@ class ClaimTest {
     void draftCopiesSubmission() {
         ClaimSubmission submission = aSubmission().build();
 
-        Claim claim = Claim.draft(UUID.randomUUID(), submission);
+        Claim claim = Claim.draft(UUID.randomUUID(), submission, Instant.EPOCH);
 
         assertThat(claim.status()).isEqualTo(ClaimStatus.DRAFT);
         assertThat(claim.identifier()).isEqualTo(submission.identifier());
@@ -29,7 +30,7 @@ class ClaimTest {
 
     @Test
     void followsTheHappyPath() {
-        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build());
+        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build(), Instant.EPOCH);
 
         claim.transitionTo(ClaimStatus.PRE_VALIDATED);
         claim.transitionTo(ClaimStatus.DISPATCHED);
@@ -41,7 +42,7 @@ class ClaimTest {
 
     @Test
     void refusesToSkipTheScrubber() {
-        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build());
+        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build(), Instant.EPOCH);
 
         assertThatThrownBy(() -> claim.transitionTo(ClaimStatus.DISPATCHED))
                 .isInstanceOfSatisfying(InvalidStateTransitionException.class, e -> {
@@ -53,7 +54,7 @@ class ClaimTest {
 
     @Test
     void rejectionRecordsViolations() {
-        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build());
+        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build(), Instant.EPOCH);
 
         claim.reject(List.of(VIOLATION));
 
@@ -63,7 +64,7 @@ class ClaimTest {
 
     @Test
     void rejectionRequiresAtLeastOneViolation() {
-        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build());
+        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build(), Instant.EPOCH);
 
         assertThatThrownBy(() -> claim.reject(List.of())).isInstanceOf(IllegalArgumentException.class);
         assertThat(claim.status()).isEqualTo(ClaimStatus.DRAFT);
@@ -71,7 +72,7 @@ class ClaimTest {
 
     @Test
     void cannotRejectAClaimThatAlreadyPassedTheScrubber() {
-        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build());
+        Claim claim = Claim.draft(UUID.randomUUID(), aSubmission().build(), Instant.EPOCH);
         claim.transitionTo(ClaimStatus.PRE_VALIDATED);
 
         assertThatThrownBy(() -> claim.reject(List.of(VIOLATION))).isInstanceOf(InvalidStateTransitionException.class);

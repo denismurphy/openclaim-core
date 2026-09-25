@@ -4,13 +4,14 @@ import static com.openclaim.engine.claim.SubmissionFixtures.aSubmission;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class IdempotencyKeyTest {
 
     private static Claim claim(SubmissionFixtures submission) {
-        return Claim.draft(UUID.randomUUID(), submission.build());
+        return Claim.draft(UUID.randomUUID(), submission.build(), Instant.EPOCH);
     }
 
     @Test
