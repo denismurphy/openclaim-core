@@ -284,6 +284,7 @@ class PatientPaymentIT {
                         .uri("/api/claims/{id}", UUID.randomUUID())
                         .header(HttpHeaders.AUTHORIZATION, TestJwt.bearer("claims:read"))
                         .exchange())
-                .hasStatus(HttpStatus.NOT_FOUND);
+                .hasStatus(HttpStatus.NOT_FOUND)
+                .hasContentType("application/problem+json");
     }
 }

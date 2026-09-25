@@ -219,7 +219,9 @@ class RemittanceIT {
                         .uri(location)
                         .header(HttpHeaders.AUTHORIZATION, payerToken("NORTHWIND-MUTUAL"))
                         .exchange())
-                .hasStatus(HttpStatus.NOT_FOUND);
+                .hasStatus(HttpStatus.NOT_FOUND)
+                .bodyText()
+                .contains("\"resourceType\":\"OperationOutcome\"");
     }
 
     @Test

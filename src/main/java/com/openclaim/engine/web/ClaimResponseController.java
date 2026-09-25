@@ -3,6 +3,7 @@ package com.openclaim.engine.web;
 import ca.uhn.fhir.context.FhirContext;
 import com.openclaim.engine.claim.ClaimRepository;
 import com.openclaim.engine.fhir.FhirMediaTypes;
+import com.openclaim.engine.fhir.OperationOutcomes;
 import com.openclaim.engine.fhir.RemittanceMapper;
 import com.openclaim.engine.remittance.AdjudicationReconciler;
 import com.openclaim.engine.remittance.RemittanceRepository;
@@ -12,6 +13,8 @@ import java.net.URI;
 import java.util.Objects;
 import java.util.UUID;
 import org.hl7.fhir.r5.model.ClaimResponse;
+import org.hl7.fhir.r5.model.OperationOutcome;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -81,7 +84,11 @@ public class ClaimResponseController {
                 .map(stored -> ResponseEntity.ok()
                         .contentType(FhirMediaTypes.FHIR_JSON)
                         .body(stored.resource()))
-                .orElseGet(() -> ResponseEntity.notFound().build());
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .contentType(FhirMediaTypes.FHIR_JSON)
+                        .body(fhir.newJsonParser()
+                                .encodeResourceToString(OperationOutcomes.error(
+                                        OperationOutcome.IssueType.NOTFOUND, "No ClaimResponse " + id))));
     }
 
     private static String payerCode(Jwt token) {
