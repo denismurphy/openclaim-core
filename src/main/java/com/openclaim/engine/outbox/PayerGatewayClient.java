@@ -1,7 +1,6 @@
 package com.openclaim.engine.outbox;
 
 import com.openclaim.engine.config.OpenClaimProperties;
-import com.openclaim.engine.fhir.FhirMediaTypes;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -14,6 +13,7 @@ import org.springframework.boot.http.client.HttpClientSettings;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -26,6 +26,12 @@ import org.springframework.web.client.RestClient;
 public class PayerGatewayClient {
 
     static final String IDEMPOTENCY_KEY = "Idempotency-Key";
+
+    /**
+     * Payloads are FHIR JSON Bundles rendered at ingest time. Declared here rather than imported from the FHIR adapter
+     * so the outbox stays independent of it.
+     */
+    static final MediaType PAYLOAD_TYPE = MediaType.parseMediaType("application/fhir+json");
 
     private final RestClient restClient;
     private final String submitPath;
@@ -51,7 +57,7 @@ public class PayerGatewayClient {
             return restClient
                     .post()
                     .uri(submitPath)
-                    .contentType(FhirMediaTypes.FHIR_JSON)
+                    .contentType(PAYLOAD_TYPE)
                     .header(IDEMPOTENCY_KEY, message.idempotencyKey())
                     .body(message.payload())
                     .exchange((request, response) -> classify(response.getStatusCode(), response.getHeaders()));

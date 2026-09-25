@@ -1,12 +1,12 @@
-package com.openclaim.engine.config;
+package com.openclaim.engine.fhir;
 
 import ca.uhn.fhir.context.FhirContext;
-import com.openclaim.engine.fhir.FhirResourceHttpMessageConverter;
+import com.openclaim.engine.config.OpenClaimProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-class FhirConfig {
+class FhirConfiguration {
 
     /** Expensive to build and thread-safe once built; parsers created from it are not, so create one per use. */
     @Bean
