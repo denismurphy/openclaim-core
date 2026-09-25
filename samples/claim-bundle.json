@@ -1,0 +1,145 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0001",
+      "resource": {
+        "resourceType": "Claim",
+        "identifier": [
+          { "system": "https://ehr.example.org/claims", "value": "CLM-2026-0001" }
+        ],
+        "status": "active",
+        "type": {
+          "coding": [
+            { "system": "http://terminology.hl7.org/CodeSystem/claim-type", "code": "professional" }
+          ]
+        },
+        "use": "claim",
+        "patient": { "reference": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0002" },
+        "created": "2026-09-01T12:00:00+01:00",
+        "provider": {
+          "identifier": { "system": "https://openclaim.example.org/provider", "value": "PRV-001" }
+        },
+        "priority": {
+          "coding": [
+            { "system": "http://terminology.hl7.org/CodeSystem/processpriority", "code": "normal" }
+          ]
+        },
+        "encounter": [
+          { "reference": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0003" }
+        ],
+        "diagnosis": [
+          {
+            "sequence": 1,
+            "diagnosisReference": { "reference": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0004" }
+          },
+          {
+            "sequence": 2,
+            "diagnosisCodeableConcept": {
+              "coding": [
+                { "system": "https://openclaim.example.org/CodeSystem/diagnosis", "code": "DX-COPD" }
+              ]
+            }
+          }
+        ],
+        "insurance": [
+          {
+            "sequence": 1,
+            "focal": true,
+            "coverage": { "reference": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0005" }
+          }
+        ],
+        "item": [
+          {
+            "sequence": 1,
+            "productOrService": {
+              "coding": [
+                { "system": "https://openclaim.example.org/CodeSystem/procedure", "code": "PROC-SPIRO" }
+              ]
+            },
+            "net": { "value": 125.00, "currency": "EUR" }
+          },
+          {
+            "sequence": 2,
+            "productOrService": {
+              "coding": [
+                { "system": "https://openclaim.example.org/CodeSystem/procedure", "code": "PROC-CONSULT" }
+              ]
+            },
+            "net": { "value": 80.50, "currency": "EUR" }
+          }
+        ],
+        "total": { "value": 205.50, "currency": "EUR" }
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0002",
+      "resource": {
+        "resourceType": "Patient",
+        "identifier": [
+          { "system": "https://ehr.example.org/mrn", "value": "MRN-0001" }
+        ],
+        "name": [ { "family": "Example", "given": [ "Alex" ] } ],
+        "gender": "unknown",
+        "birthDate": "1980-01-01"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0003",
+      "resource": {
+        "resourceType": "Encounter",
+        "status": "completed",
+        "class": [
+          {
+            "coding": [
+              { "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "AMB" }
+            ]
+          }
+        ],
+        "subject": { "reference": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0002" },
+        "actualPeriod": {
+          "start": "2026-09-01T09:30:00+01:00",
+          "end": "2026-09-01T10:15:00+01:00"
+        }
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0004",
+      "resource": {
+        "resourceType": "Condition",
+        "clinicalStatus": {
+          "coding": [
+            { "system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active" }
+          ]
+        },
+        "code": {
+          "coding": [
+            { "system": "https://openclaim.example.org/CodeSystem/diagnosis", "code": "DX-ASTHMA" }
+          ]
+        },
+        "subject": { "reference": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0002" }
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0005",
+      "resource": {
+        "resourceType": "Coverage",
+        "status": "active",
+        "kind": "insurance",
+        "subscriberId": [
+          { "system": "https://payer.example.org/member", "value": "POL123456" }
+        ],
+        "beneficiary": { "reference": "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0002" },
+        "relationship": {
+          "coding": [
+            { "system": "http://terminology.hl7.org/CodeSystem/subscriber-relationship", "code": "self" }
+          ]
+        },
+        "insurer": {
+          "identifier": { "system": "https://openclaim.example.org/payer", "value": "ACME-HEALTH" }
+        }
+      }
+    }
+  ]
+}
