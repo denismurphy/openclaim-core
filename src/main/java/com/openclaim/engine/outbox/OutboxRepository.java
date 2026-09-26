@@ -1,5 +1,8 @@
 package com.openclaim.engine.outbox;
 
+import com.openclaim.engine.claim.Claim;
+import com.openclaim.engine.claim.ClaimStatus;
+import com.openclaim.engine.claim.IdempotencyKey;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -14,22 +17,35 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class OutboxRepository {
 
+    static final String CLAIM_PRE_VALIDATED = "CLAIM_PRE_VALIDATED";
+
     private final JdbcClient jdbc;
 
     public OutboxRepository(JdbcClient jdbc) {
         this.jdbc = jdbc;
     }
 
-    /** Must run inside the transaction that commits the claim's state change. */
-    public void enqueue(OutboxMessage message) {
+    /**
+     * Queues delivery of an accepted claim to the payer. Must run inside the transaction that commits the claim's
+     * transition to {@code PRE_VALIDATED}, so the claim and its message are stored together or not at all.
+     *
+     * @param payload the exact request body, fixed now so a retry re-sends what was scrubbed
+     * @throws IllegalStateException if the claim is not {@code PRE_VALIDATED}: only a claim that passed the scrubber
+     *     may be sent to the payer
+     */
+    public void enqueueDispatch(Claim claim, String payload) {
+        if (claim.status() != ClaimStatus.PRE_VALIDATED) {
+            throw new IllegalStateException("Claim %s is %s; only a PRE_VALIDATED claim can be dispatched"
+                    .formatted(claim.id(), claim.status()));
+        }
         jdbc.sql("""
                         INSERT INTO outbox_message (id, claim_id, event_type, idempotency_key, payload, status)
                         VALUES (:id, :claimId, :eventType, :idempotencyKey, :payload, 'PENDING')""")
-                .param("id", message.id())
-                .param("claimId", message.claimId())
-                .param("eventType", message.eventType())
-                .param("idempotencyKey", message.idempotencyKey())
-                .param("payload", message.payload())
+                .param("id", UUID.randomUUID())
+                .param("claimId", claim.id())
+                .param("eventType", CLAIM_PRE_VALIDATED)
+                .param("idempotencyKey", IdempotencyKey.forDispatch(claim))
+                .param("payload", payload)
                 .update();
     }
 

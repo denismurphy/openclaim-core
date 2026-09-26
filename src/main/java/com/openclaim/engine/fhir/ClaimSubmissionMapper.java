@@ -11,8 +11,11 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Currency;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
 import org.hl7.fhir.r5.model.Bundle;
 import org.hl7.fhir.r5.model.Claim;
 import org.hl7.fhir.r5.model.CodeableConcept;
@@ -41,6 +44,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class ClaimSubmissionMapper {
 
+    private static final String CONDITION_VERIFICATION_STATUS =
+            "http://terminology.hl7.org/CodeSystem/condition-ver-status";
+
     private final Currency currency;
     private final ZoneId clinicalZone;
     private final String mrnSystem;
@@ -68,15 +74,26 @@ public class ClaimSubmissionMapper {
             throw new FhirMappingException(
                     IssueType.NOTSUPPORTED, "Claim.use", "Only Claim.use = 'claim' is supported");
         }
+        if (claim.getStatus() != Enumerations.FinancialResourceStatusCodes.ACTIVE) {
+            throw new FhirMappingException(
+                    IssueType.NOTSUPPORTED,
+                    "Claim.status",
+                    "Only Claim.status = 'active' can be submitted for payment");
+        }
         BundleIndex index = new BundleIndex(bundle);
+        Optional<Patient> patient = claim.hasPatient()
+                ? Optional.of(resolve(index, claim.getPatient(), Patient.class, "Claim.patient"))
+                : Optional.empty();
         Optional<Coverage> coverage = focalCoverage(claim, index);
         Encounter encounter = encounter(claim, index);
+        requireSamePatient(patient, encounter.getSubject(), index, "Encounter.subject");
+        coverage.ifPresent(c -> requireSamePatient(patient, c.getBeneficiary(), index, "Coverage.beneficiary"));
         List<ClaimSubmission.LineItem> items = items(claim);
         long total = total(claim, items);
         try {
             return new ClaimSubmission(
                     identifier(claim),
-                    patientMrn(claim, index),
+                    patient.map(this::patientMrn).orElse(null),
                     coverage.map(c -> payerCode(c, index)).orElse(null),
                     coverage.map(ClaimSubmissionMapper::policyNumber).orElse(null),
                     coverage.filter(Coverage::hasKind)
@@ -84,7 +101,7 @@ public class ClaimSubmissionMapper {
                             .orElse(null),
                     serviceStart(encounter),
                     encounterClass(encounter),
-                    diagnoses(claim, index),
+                    diagnoses(claim, index, patient),
                     items,
                     currency,
                     total);
@@ -104,16 +121,31 @@ public class ClaimSubmissionMapper {
                         "Claim.identifier with both system and value is required to detect re-transmissions"));
     }
 
-    private @Nullable String patientMrn(Claim claim, BundleIndex index) {
-        if (!claim.hasPatient()) {
-            return null;
-        }
-        Patient patient = resolve(index, claim.getPatient(), Patient.class, "Claim.patient");
+    private @Nullable String patientMrn(Patient patient) {
         return patient.getIdentifier().stream()
                 .filter(id -> mrnSystem.equals(id.getSystem()) && id.hasValue())
                 .map(Identifier::getValue)
                 .findFirst()
                 .orElse(null);
+    }
+
+    /**
+     * A resource about the claim's patient must reference the same Patient entry; otherwise one patient's encounter,
+     * coverage or diagnosis would be billed under another's claim. Only literal references can be compared; a logical
+     * (identifier-only) reference, or a claim without a patient, is left to the scrubber.
+     */
+    private static void requireSamePatient(
+            Optional<Patient> claimPatient, Reference subject, BundleIndex index, String expression) {
+        if (claimPatient.isEmpty() || !subject.hasReference()) {
+            return;
+        }
+        Patient referenced = resolve(index, subject, Patient.class, expression);
+        if (referenced != claimPatient.get()) {
+            throw new FhirMappingException(
+                    IssueType.INVARIANT,
+                    expression,
+                    "%s references a different patient than Claim.patient".formatted(expression));
+        }
     }
 
     private static Optional<Coverage> focalCoverage(Claim claim, BundleIndex index) {
@@ -201,7 +233,9 @@ public class ClaimSubmissionMapper {
                 .orElse(null);
     }
 
-    private static List<Coding> diagnoses(Claim claim, BundleIndex index) {
+    private static List<Coding> diagnoses(Claim claim, BundleIndex index, Optional<Patient> patient) {
+        requireUniqueSequences(
+                claim.getDiagnosis().stream().map(Claim.DiagnosisComponent::getSequence), "Claim.diagnosis");
         List<Claim.DiagnosisComponent> sorted = claim.getDiagnosis().stream()
                 .sorted(Comparator.comparingInt(Claim.DiagnosisComponent::getSequence))
                 .toList();
@@ -210,8 +244,10 @@ public class ClaimSubmissionMapper {
             String expression = "Claim.diagnosis.where(sequence = %d)".formatted(diagnosis.getSequence());
             CodeableConcept concept;
             if (diagnosis.hasDiagnosisReference()) {
-                concept = resolve(index, diagnosis.getDiagnosisReference(), Condition.class, expression)
-                        .getCode();
+                Condition condition = resolve(index, diagnosis.getDiagnosisReference(), Condition.class, expression);
+                requireSamePatient(patient, condition.getSubject(), index, "Condition.subject");
+                requireValidFinding(condition, expression);
+                concept = condition.getCode();
             } else if (diagnosis.hasDiagnosisCodeableConcept()) {
                 concept = diagnosis.getDiagnosisCodeableConcept();
             } else {
@@ -222,6 +258,29 @@ public class ClaimSubmissionMapper {
         return codes;
     }
 
+    /** A refuted or erroneous diagnosis cannot indicate a procedure, so it cannot support a claim. */
+    private static void requireValidFinding(Condition condition, String expression) {
+        for (String code : List.of("refuted", "entered-in-error")) {
+            if (condition.getVerificationStatus().hasCoding(CONDITION_VERIFICATION_STATUS, code)) {
+                throw new FhirMappingException(
+                        IssueType.BUSINESSRULE,
+                        expression,
+                        "The diagnosis references a Condition whose verification status is '%s'".formatted(code));
+            }
+        }
+    }
+
+    /** Violations and payer adjudications address lines by sequence, so a repeated sequence is ambiguous. */
+    private static void requireUniqueSequences(Stream<Integer> sequences, String expression) {
+        Set<Integer> seen = new HashSet<>();
+        sequences.filter(sequence -> !seen.add(sequence)).findFirst().ifPresent(duplicate -> {
+            throw new FhirMappingException(
+                    IssueType.INVARIANT,
+                    expression,
+                    "%s sequence %d is used more than once".formatted(expression, duplicate));
+        });
+    }
+
     private List<ClaimSubmission.LineItem> items(Claim claim) {
         if (claim.getItem().size() > maxItems) {
             throw new FhirMappingException(
@@ -230,6 +289,7 @@ public class ClaimSubmissionMapper {
                     "A claim may have at most %d items; found %d"
                             .formatted(maxItems, claim.getItem().size()));
         }
+        requireUniqueSequences(claim.getItem().stream().map(Claim.ItemComponent::getSequence), "Claim.item");
         List<ClaimSubmission.LineItem> items = new ArrayList<>();
         for (Claim.ItemComponent item : claim.getItem()) {
             String expression = "Claim.item.where(sequence = %d)".formatted(item.getSequence());

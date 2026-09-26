@@ -5,10 +5,8 @@ import com.openclaim.engine.claim.ClaimIdentifier;
 import com.openclaim.engine.claim.ClaimRepository;
 import com.openclaim.engine.claim.ClaimStatus;
 import com.openclaim.engine.claim.ClaimSubmission;
-import com.openclaim.engine.claim.IdempotencyKey;
 import com.openclaim.engine.ledger.Journal;
 import com.openclaim.engine.ledger.Ledger;
-import com.openclaim.engine.outbox.OutboxMessage;
 import com.openclaim.engine.outbox.OutboxRepository;
 import com.openclaim.engine.rules.RulesPipeline;
 import com.openclaim.engine.rules.ValidationSummary;
@@ -77,12 +75,7 @@ public class ClaimIngestionService {
         claim.transitionTo(ClaimStatus.PRE_VALIDATED);
         claims.save(claim);
         ledger.post(Journal.charge(claim.id(), claim.totalBilledMinor(), claim.currency(), claim.serviceStart()));
-        outbox.enqueue(new OutboxMessage(
-                UUID.randomUUID(),
-                claim.id(),
-                OutboxMessage.CLAIM_PRE_VALIDATED,
-                IdempotencyKey.forDispatch(claim),
-                payload.render(claim.id())));
+        outbox.enqueueDispatch(claim, payload.render(claim.id()));
         return claim;
     }
 

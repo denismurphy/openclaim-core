@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.function.Consumer;
 import org.hl7.fhir.r5.model.Bundle;
 import org.hl7.fhir.r5.model.CodeableConcept;
+import org.hl7.fhir.r5.model.Condition;
 import org.hl7.fhir.r5.model.Coverage;
 import org.hl7.fhir.r5.model.DateTimeType;
 import org.hl7.fhir.r5.model.Encounter;
@@ -26,6 +27,9 @@ import org.hl7.fhir.r5.model.Patient;
 import org.hl7.fhir.r5.model.Reference;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class ClaimSubmissionMapperTest {
 
@@ -69,6 +73,43 @@ class ClaimSubmissionMapperTest {
                         new ClaimSubmission.LineItem(2, new Coding(PROCEDURES, "PROC-CONSULT"), 8_050));
         assertThat(submission.totalMinor()).isEqualTo(20_550);
         assertThat(submission.currency().getCurrencyCode()).isEqualTo("EUR");
+    }
+
+    private static Reference otherPatient(Bundle bundle) {
+        String fullUrl = "urn:uuid:9d1b8f0e-3f0a-4a52-9c1e-0c8a4f1c0999";
+        bundle.addEntry()
+                .setFullUrl(fullUrl)
+                .setResource(new Patient()
+                        .addIdentifier(new Identifier()
+                                .setSystem("https://ehr.example.org/mrn")
+                                .setValue("MRN-0999")));
+        return new Reference(fullUrl);
+    }
+
+    private static CodeableConcept verificationStatus(String code) {
+        return new CodeableConcept(new org.hl7.fhir.r5.model.Coding(
+                "http://terminology.hl7.org/CodeSystem/condition-ver-status", code, null));
+    }
+
+    @Nested
+    class AcceptedVariants {
+
+        @Test
+        void unresolvableLogicalSubjectIsNotCompared() {
+            ClaimSubmission submission = mapWith(b -> entry(b, Encounter.class)
+                    .setSubject(new Reference().setIdentifier(new Identifier().setValue("MRN-0001"))));
+
+            assertThat(submission.patientMrn()).isEqualTo("MRN-0001");
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"confirmed", "provisional", "differential", "unconfirmed"})
+        void diagnosesThatAreNotRefutedAreAccepted(String verification) {
+            ClaimSubmission submission =
+                    mapWith(b -> entry(b, Condition.class).setVerificationStatus(verificationStatus(verification)));
+
+            assertThat(submission.diagnoses()).hasSize(2);
+        }
     }
 
     @Nested
@@ -152,6 +193,9 @@ class ClaimSubmissionMapperTest {
                 patientEntry.setFullUrl("https://ehr.example.org/fhir/Patient/p1");
                 patientEntry.getResource().setId("p1");
                 claimOf(b).setPatient(new Reference("Patient/p1"));
+                entry(b, Encounter.class).setSubject(new Reference("Patient/p1"));
+                entry(b, Coverage.class).setBeneficiary(new Reference("Patient/p1"));
+                entry(b, Condition.class).setSubject(new Reference("Patient/p1"));
             });
 
             assertThat(submission.patientMrn()).isEqualTo("MRN-0001");
@@ -207,6 +251,80 @@ class ClaimSubmissionMapperTest {
                     IssueType.NOTSUPPORTED,
                     "Claim.use",
                     "'claim'");
+        }
+
+        @ParameterizedTest
+        @EnumSource(
+                value = Enumerations.FinancialResourceStatusCodes.class,
+                names = {"CANCELLED", "DRAFT", "ENTEREDINERROR"})
+        void claimsThatAreNotActive(Enumerations.FinancialResourceStatusCodes status) {
+            assertRejected(b -> claimOf(b).setStatus(status), IssueType.NOTSUPPORTED, "Claim.status", "'active'");
+        }
+
+        @Test
+        void claimWithoutStatus() {
+            assertRejected(b -> claimOf(b).setStatusElement(null), IssueType.NOTSUPPORTED, "Claim.status", "'active'");
+        }
+
+        @Test
+        void encounterOfAnotherPatient() {
+            assertRejected(
+                    b -> entry(b, Encounter.class).setSubject(otherPatient(b)),
+                    IssueType.INVARIANT,
+                    "Encounter.subject",
+                    "Claim.patient");
+        }
+
+        @Test
+        void coverageOfAnotherPatient() {
+            assertRejected(
+                    b -> entry(b, Coverage.class).setBeneficiary(otherPatient(b)),
+                    IssueType.INVARIANT,
+                    "Coverage.beneficiary",
+                    "Claim.patient");
+        }
+
+        @Test
+        void diagnosisOfAnotherPatient() {
+            assertRejected(
+                    b -> entry(b, Condition.class).setSubject(otherPatient(b)),
+                    IssueType.INVARIANT,
+                    "Condition.subject",
+                    "Claim.patient");
+        }
+
+        @Test
+        void danglingEncounterSubject() {
+            assertRejected(
+                    b -> entry(b, Encounter.class).setSubject(new Reference("urn:uuid:missing")),
+                    IssueType.NOTFOUND,
+                    "Encounter.subject",
+                    "urn:uuid:missing");
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"refuted", "entered-in-error"})
+        void diagnosisThatIsNotAValidFinding(String verification) {
+            assertRejected(
+                    b -> entry(b, Condition.class).setVerificationStatus(verificationStatus(verification)),
+                    IssueType.BUSINESSRULE,
+                    "Claim.diagnosis.where(sequence = 1)",
+                    verification);
+        }
+
+        @Test
+        void duplicateItemSequence() {
+            assertRejected(
+                    b -> claimOf(b).getItem().get(1).setSequence(1), IssueType.INVARIANT, "Claim.item", "sequence 1");
+        }
+
+        @Test
+        void duplicateDiagnosisSequence() {
+            assertRejected(
+                    b -> claimOf(b).getDiagnosis().get(1).setSequence(1),
+                    IssueType.INVARIANT,
+                    "Claim.diagnosis",
+                    "sequence 1");
         }
 
         @Test
