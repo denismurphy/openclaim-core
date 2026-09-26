@@ -10,34 +10,29 @@ A Spring Boot MVP that automates part of healthcare revenue cycle management (RC
 
 The application operates as an asynchronous clearinghouse bridge between clinical Point of Care (EHR/PAS) systems and private health payer gateways.
 
-```
-[ Clinical EHR / Hospital PAS ]
-              │
-              │ (POST Claim/$submit: FHIR R5 collection Bundle)
-              ▼
-┌────────────────────────────────────────────────────────┐
-│ OpenClaim Core Engine (Spring Boot + FHIR R5)          │
-│                                                        │
-│  ┌──────────────────┐       ┌───────────────────────┐  │
-│  │ FHIR R5 Ingest   │──────▶│ Pre-Submission        │  │
-│  │ Parser & Adapter │       │ Rules Pipeline        │  │
-│  └──────────────────┘       └──────────┬────────────┘  │
-│                                        │               │
-│  ┌──────────────────┐       ┌──────────▼────────────┐  │
-│  │ Append-Only      │◀──────│ Claim State Machine   │  │
-│  │ Financial Ledger │       │ (Validation Lifecycle)│  │
-│  └──────────────────┘       └──────────┬────────────┘  │
-│                                        │               │
-│                             ┌──────────▼────────────┐  │
-│                             │ Transactional Outbox  │  │
-│                             └──────────┬────────────┘  │
-└────────────────────────────────────────┼───────────────┘
-                                         │
-                                         ▼ (mTLS / Idempotent POST)
-                               [ External Payer Gateway ]
-                                         │
-                                         ▼ (POST ClaimResponse: adjudication)
-                               [ OpenClaim Core Engine ]
+```mermaid
+flowchart TB
+    EHR["Clinical EHR / Hospital PAS"]
+    subgraph Core["OpenClaim Core Engine: Spring Boot + FHIR R5"]
+        Ingest["FHIR R5 Ingest<br/>Parser and Adapter"]
+        Rules["Pre-Submission<br/>Rules Pipeline"]
+        SM["Claim State Machine<br/>Validation Lifecycle"]
+        Ledger[("Append-Only<br/>Financial Ledger")]
+        Outbox[("Transactional<br/>Outbox")]
+        Relay["Outbox Relay"]
+        Recon["Adjudication<br/>Reconciler"]
+        Ingest --> Rules --> SM
+        SM -- "CHARGE journal" --> Ledger
+        SM -- "same transaction" --> Outbox
+        Outbox --> Relay
+        Relay -- "delivered: DISPATCHED" --> SM
+        Recon -- "SETTLED or ADJUDICATED_PARTIAL" --> SM
+        Recon -- "adjudication journals" --> Ledger
+    end
+    Payer["External Payer Gateway"]
+    EHR -- "POST Claim/$submit<br/>FHIR R5 collection Bundle" --> Ingest
+    Relay -- "mTLS, idempotent POST" --> Payer
+    Payer -- "POST ClaimResponse<br/>adjudication" --> Recon
 ```
 
 ### Architectural Invariants
@@ -71,29 +66,59 @@ Procedure and diagnosis codes use synthetic code systems (`https://openclaim.exa
 
 A claim progresses through non-reversible states. State transitions are strictly enforced before ledger generation or network communication can occur.
 
-```
-   [ DRAFT ] ───────────┐
-       │ (Scrubbing     │ (Rules Violation)
-       │  Passes)       │
-       ▼                ▼
-[ PRE_VALIDATED ]   [ REJECTED_SCRUBBER ]
-       │
-       │ (Outbox delivery acknowledged, or a remittance
-       │  arrives after a delivery attempt started)
-       ▼
- [ DISPATCHED ]
-       │
-       ├──────────────────────────────┐
-       │ (Nothing owed by the patient)│ (Patient liability remains)
-       ▼                              ▼
-   [ SETTLED ]                [ ADJUDICATED_PARTIAL ]
-                                      │
-                                      │ (Patient balance collected)
-                                      ▼
-                                  [ SETTLED ]
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT: Claim/$submit, in memory only
+    DRAFT --> PRE_VALIDATED: scrubbing passes
+    DRAFT --> REJECTED_SCRUBBER: any rule violation
+    PRE_VALIDATED --> DISPATCHED: payer acknowledged delivery,<br/>or remittance after a delivery attempt started
+    DISPATCHED --> SETTLED: nothing owed by the patient
+    DISPATCHED --> ADJUDICATED_PARTIAL: patient liability remains
+    ADJUDICATED_PARTIAL --> SETTLED: patient balance collected
+    REJECTED_SCRUBBER --> [*]
+    SETTLED --> [*]
 ```
 
 `DRAFT` exists only in memory during ingest; a claim is first stored in its scrubbed state. A contractual write-off alone does not make a claim partial: it is `SETTLED` when the patient owes nothing. A payer paying more than the eligible amount is rejected, not applied.
+
+### Aggregate Model
+
+```mermaid
+classDiagram
+    class ClaimAggregate {
+        UUID id
+        ClaimStatus status
+        ClaimIdentifier identifier
+        String submissionHash
+        String patientMrn
+        String payerCode
+        long totalBilledMinor
+        Instant serviceStart
+        Long version
+        transitionTo(ClaimStatus target)
+        reject(List~ScrubViolation~ violations)
+    }
+    class ClaimStatus {
+        <<enumeration>>
+        DRAFT
+        REJECTED_SCRUBBER
+        PRE_VALIDATED
+        DISPATCHED
+        ADJUDICATED_PARTIAL
+        SETTLED
+        canTransitionTo(ClaimStatus target) boolean
+    }
+    class ScrubViolation {
+        String rule
+        String code
+        String message
+        String expression
+    }
+    ClaimAggregate --> ClaimStatus
+    ClaimAggregate "1" *-- "0..*" ClaimLine : lines
+    ClaimAggregate "1" *-- "0..*" ClaimDiagnosis : diagnoses
+    ClaimAggregate "1" *-- "0..*" ScrubViolation : violations
+```
 
 ### State Transition Pseudocode
 
@@ -133,27 +158,57 @@ ENUM METHOD ClaimStatus.canTransitionTo(target) -> Boolean:   // exhaustive swit
 
 Before external submission, claims pass through an ordered sequence of validation rules. **Every rule runs and every violation is collected**, so a submitter can correct a claim in one round trip. Any violation marks the claim `REJECTED_SCRUBBER` and each violation is stored with a code, a message and a FHIRPath expression for auditing.
 
+```mermaid
+flowchart TD
+    In["Incoming canonical ClaimSubmission"] --> S1
+    S1["Stage 1: Administrative and identifier verification"] --> S2
+    S2["Stage 2: Clinical indication matching<br/>diagnosis vs procedure"] --> S3
+    S3["Stage 3: Care setting compatibility<br/>inpatient vs day-case"] --> S4
+    S4["Stage 4: Bundling and code conflict enforcement"] --> D
+    D{"Any violations<br/>collected?"}
+    D -- "yes" --> R["REJECTED_SCRUBBER<br/>all violations recorded"]
+    D -- "no" --> P["PRE_VALIDATED<br/>schedule outbox dispatch"]
 ```
-Incoming Canonical Model
-         │
-         ▼
-[ Stage 1: Administrative & Identifier Verification ]
-         ▼
-[ Stage 2: Clinical Indication Matching (Diagnosis vs Procedure) ]
-         ▼
-[ Stage 3: Care Setting Compatibility (Inpatient vs Day-Case) ]
-         ▼
-[ Stage 4: Bundling & Code Conflict Enforcement ]
-         │
-         ├──▶ (Any Violation) ──▶ Set REJECTED_SCRUBBER (all violations recorded)
-         ▼
-   (No Violations) ──▶ Set PRE_VALIDATED (Schedule Outbox Dispatch)
-```
+
+Every stage runs regardless of earlier failures; the decision is taken once, over the combined violations.
 
 Rules never see FHIR resources. The FHIR adapter first maps the Bundle to a canonical `ClaimSubmission`:
 
 * **Rejected before scrubbing (HTTP 422, nothing stored):** only problems that make the claim unidentifiable, unstorable or incoherent. For example, a missing `Claim.identifier`, an unresolvable reference, resources that belong to different patients, a refuted diagnosis, duplicate sequences, or money that is fractional, negative, in a foreign currency or inconsistent with `Claim.total`.
 * **Mapped as absent:** missing business data (MRN, payer, policy number, encounter class) is mapped as `null` so the scrubber records it as a violation on a stored, rejected claim.
+
+### Rule Model
+
+```mermaid
+classDiagram
+    class ScrubberRule {
+        <<interface>>
+        name() String
+        evaluate(ClaimSubmission submission, FeeScheduleSnapshot schedule) RuleResult
+    }
+    class RulesPipeline {
+        List~ScrubberRule~ rules
+        evaluate(ClaimSubmission submission) ValidationSummary
+    }
+    class RuleResult {
+        List~ScrubViolation~ violations
+        isFailed() boolean
+    }
+    class FeeScheduleSnapshot {
+        payerKnown() boolean
+        rulesFor(Coding procedure) Optional~ProcedureRules~
+        conflicting(Coding first, Coding second) boolean
+    }
+    ScrubberRule <|.. AdministrativeRule : order 100
+    ScrubberRule <|.. ClinicalIndicationRule : order 200
+    ScrubberRule <|.. CareSettingRule : order 300
+    ScrubberRule <|.. BundlingRule : order 400
+    RulesPipeline o-- ScrubberRule
+    RulesPipeline ..> FeeScheduleRepository : one snapshot per claim
+    FeeScheduleRepository ..> FeeScheduleSnapshot : creates
+    ScrubberRule ..> RuleResult : returns
+    ScrubberRule ..> FeeScheduleSnapshot : reads
+```
 
 ### Rules Engine Pseudocode
 
@@ -257,6 +312,38 @@ RECORD LedgerPosting:
 VIEW FinancialLedgerEntry = LedgerJournal JOIN LedgerPosting   // one row per posting
 ```
 
+```mermaid
+erDiagram
+    CLAIM ||--o{ LEDGER_JOURNAL : "booked in"
+    LEDGER_JOURNAL ||--|{ LEDGER_POSTING : "balanced by, sum = 0"
+    LEDGER_JOURNAL {
+        uuid id PK
+        uuid claim_id FK
+        text entry_type
+        text external_reference "unique per claim and type"
+        timestamptz transaction_time "stamped by the database"
+        timestamptz valid_time "date of care"
+    }
+    LEDGER_POSTING {
+        uuid journal_id PK, FK
+        int position PK
+        text account
+        bigint amount_minor "non-zero, debit positive"
+        char currency
+    }
+```
+
+How money moves between accounts (each arrow is one journal, from the credited account to the debited one):
+
+```mermaid
+flowchart LR
+    REVENUE -- "CHARGE" --> PAYER_AR
+    PAYER_AR -- "WRITE_OFF" --> CONTRACTUAL_ADJ
+    PAYER_AR -- "PAYER_REMITTANCE" --> CASH
+    PAYER_AR -- "PATIENT_LIABILITY" --> PATIENT_AR
+    PATIENT_AR -- "PATIENT_PAYMENT" --> CASH
+```
+
 | Journal | Debit | Credit | When |
 | --- | --- | --- | --- |
 | `CHARGE` | PAYER_AR | REVENUE | Claim accepted (`PRE_VALIDATED`) |
@@ -270,6 +357,23 @@ Double entry is required because patient liability is a reclassification between
 ### 5.2 Transactional Outbox & Deterministic Idempotency
 
 To eliminate dual-write hazards between database updates and external HTTP dispatches, the claim, its charge and the outbox event are persisted inside a single local database transaction. Nothing is sent to the payer during ingest.
+
+```mermaid
+flowchart TD
+    A["POST Claim/$submit"] --> B{"Maps to canonical<br/>ClaimSubmission?"}
+    B -- "no" --> E422["422 OperationOutcome<br/>nothing stored"]
+    B -- "yes" --> T["BEGIN transaction<br/>run every scrubber rule"]
+    T --> V{"Violations?"}
+    V -- "yes" --> REJ["INSERT claim REJECTED_SCRUBBER<br/>with violations"]
+    V -- "no" --> ACC["INSERT claim PRE_VALIDATED<br/>INSERT CHARGE journal<br/>INSERT outbox message PENDING"]
+    REJ --> C{"Claim.identifier already stored?<br/>unique index, checked on INSERT"}
+    ACC --> C
+    C -- "no: COMMIT" --> OK["200 ClaimResponse<br/>queued or error"]
+    C -- "yes: transaction aborted" --> L["new transaction:<br/>load stored claim"]
+    L --> H{"Same content<br/>fingerprint?"}
+    H -- "yes" --> RP["200 replay of the<br/>stored ClaimResponse"]
+    H -- "no" --> CF["409 conflict"]
+```
 
 ```
 ALGORITHM TransactionalClaimIngest:
@@ -319,6 +423,23 @@ ALGORITHM TransactionalClaimIngest:
 
 **Outbox relay.** A poller reserves due messages with `FOR UPDATE SKIP LOCKED`, marking them `IN_FLIGHT` with a lease expiry and a fresh lease token, and commits before any network call. It POSTs each payload with an `Idempotency-Key` header over mutual TLS. The outcome is then recorded with an update fenced by the lease token, so a relay whose lease expired cannot overwrite a newer attempt. On success, the claim moves to `DISPATCHED` in the same transaction.
 
+```mermaid
+sequenceDiagram
+    participant R as Outbox relay
+    participant DB as PostgreSQL
+    participant P as Payer gateway
+    R->>DB: tx 1: reserve due messages FOR UPDATE SKIP LOCKED<br/>set IN_FLIGHT, lease_until, new lease_token
+    Note over R,P: no transaction is open during the HTTP call
+    R->>P: POST claim Bundle, Idempotency-Key, mTLS
+    P-->>R: response or timeout
+    R->>DB: tx 2: lock claim row, then update the message<br/>WHERE id = ? AND lease_token = ?
+    alt one row updated and delivered
+        R->>DB: claim to DISPATCHED
+    else no row updated
+        Note over R: lease lost to another relay, record nothing
+    end
+```
+
 | Payer response | Result |
 | --- | --- |
 | 2xx, or 409 (already received with this key) | Delivered |
@@ -332,40 +453,24 @@ Throughput is limited by batch size per poll interval.
 
 ## 6. End-to-End Execution Sequence
 
-```
-Hospital EHR                OpenClaim Engine                  External Payer
-    │                              │                                │
-    │ 1. POST Claim/$submit        │                                │
-    │    (FHIR R5 Bundle)          │                                │
-    ├─────────────────────────────▶│                                │
-    │                              │ 2. Parse & map FHIR R5         │
-    │                              │ 3. Execute Rules Pipeline      │
-    │                              │ 4. Atomic Commit:              │
-    │                              │    - Claim (PRE_VALIDATED)     │
-    │                              │    - CHARGE journal            │
-    │                              │    - Outbox Event              │
-    │ 5. HTTP 200 ClaimResponse    │                                │
-    │    (outcome = queued)        │                                │
-    │◀─────────────────────────────┤                                │
-    │                              │ 6. Relay reserves the message  │
-    │                              │    (lease + fencing token)     │
-    │                              │ 7. POST Claim Bundle           │
-    │                              │    Header: Idempotency-Key     │
-    │                              ├───────────────────────────────▶│
-    │                              │ 8. HTTP 2xx (or 409 duplicate) │
-    │                              │◀───────────────────────────────┤
-    │                              │ 9. Claim -> DISPATCHED         │
-    │                              │                                │
-    │                              │ 10. POST ClaimResponse         │
-    │                              │     (outcome = complete)       │
-    │                              │◀───────────────────────────────┤
-    │                              │ 11. Append Ledger Journals     │
-    │                              │     (Write-off, Payer paid,    │
-    │                              │      Patient liability)        │
-    │                              │ 12. Claim -> SETTLED or        │
-    │                              │     ADJUDICATED_PARTIAL        │
-    │                              │ 13. HTTP 201 Created           │
-    │                              ├───────────────────────────────▶│
+```mermaid
+sequenceDiagram
+    participant EHR as Hospital EHR
+    participant OC as OpenClaim Engine
+    participant P as External Payer
+    EHR->>OC: 1. POST Claim/$submit, FHIR R5 Bundle
+    OC->>OC: 2. Parse and map FHIR R5 resources
+    OC->>OC: 3. Execute rules pipeline
+    OC->>OC: 4. Atomic commit: claim PRE_VALIDATED,<br/>CHARGE journal, outbox event
+    OC-->>EHR: 5. HTTP 200 ClaimResponse, outcome queued
+    OC->>OC: 6. Relay reserves the message, lease and fencing token
+    OC->>P: 7. POST claim Bundle, header Idempotency-Key
+    P-->>OC: 8. HTTP 2xx, or 409 already received
+    OC->>OC: 9. Claim to DISPATCHED
+    P->>OC: 10. POST ClaimResponse, outcome complete
+    OC->>OC: 11. Append journals: write-off,<br/>payer paid, patient liability
+    OC->>OC: 12. Claim to SETTLED or ADJUDICATED_PARTIAL
+    OC-->>P: 13. HTTP 201 Created
 ```
 
 A rejected claim gets `HTTP 200` with `outcome = error` and one `error` entry per violation in step 5, and is never dispatched.
@@ -398,6 +503,31 @@ com.openclaim.engine
 ├── outbox        // Outbox storage, relay (leases, fencing, backoff), payer client (mTLS)
 ├── remittance    // AdjudicationReconciler, PatientPaymentService
 └── web           // Controllers, OperationOutcome and problem-detail error mapping
+```
+
+Package dependencies as built (arrows point from user to dependency; there are no cycles):
+
+```mermaid
+flowchart TD
+    web --> fhir
+    web --> ingest
+    web --> remittance
+    web --> ledger
+    web --> claim
+    web --> config
+    fhir --> remittance
+    fhir --> claim
+    fhir --> config
+    ingest --> rules
+    ingest --> ledger
+    ingest --> outbox
+    ingest --> claim
+    remittance --> ledger
+    remittance --> outbox
+    remittance --> claim
+    outbox --> claim
+    outbox --> config
+    rules --> claim
 ```
 
 Spring Data repositories serve as the storage ports; no separate port interfaces are declared. ArchUnit enforces the boundaries: no package cycles, HAPI only in `fhir` and `web`, no web types in the domain, rules never touch the database, and postings are built only inside `ledger`.
