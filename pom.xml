@@ -25,7 +25,7 @@
         <!-- Spring Security oauth2-jose 7.1.1 requires 10.9.1; HL7 core would otherwise pull 10.0.2 -->
         <nimbus-jose-jwt.version>10.9.1</nimbus-jose-jwt.version>
         <wiremock.version>3.13.2</wiremock.version>
-        <archunit.version>1.5.0</archunit.version>
+        <archunit.version>1.5.1</archunit.version>
         <jacoco.version>0.8.15</jacoco.version>
         <spotless.version>3.10.2</spotless.version>
         <palantir-java-format.version>2.99.0</palantir-java-format.version>
