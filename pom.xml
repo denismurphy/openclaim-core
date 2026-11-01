@@ -26,7 +26,7 @@
         <nimbus-jose-jwt.version>10.9.1</nimbus-jose-jwt.version>
         <wiremock.version>3.13.2</wiremock.version>
         <archunit.version>1.5.0</archunit.version>
-        <jacoco.version>0.8.15</jacoco.version>
+        <jacoco.version>0.8.16</jacoco.version>
         <spotless.version>3.10.2</spotless.version>
         <palantir-java-format.version>2.99.0</palantir-java-format.version>
     </properties>
